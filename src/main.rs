@@ -18,16 +18,28 @@ fn main() -> ExitCode {
     match parsed.action {
         Action::Help => print!("{}", cli::help_text()),
         Action::Version => println!("{}", cli::version_text()),
-        Action::Run {
-            command: Some(command),
-            options,
-        } => {
-            if let Err(error) = wizard::run(&command, &options, &mut io::stdout().lock()) {
-                eprintln!("wizard: {error}");
+        Action::Run { commands, options } => {
+            if commands.is_empty() {
+                eprintln!("{}", cli::short_usage());
+                return ExitCode::FAILURE;
+            }
+            let mut resolved_all = true;
+            for command in commands {
+                match wizard::run(&command, &options, &mut io::stdout().lock()) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        resolved_all = false;
+                    }
+                    Err(error) => {
+                        eprintln!("wizard: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            if !resolved_all {
                 return ExitCode::FAILURE;
             }
         }
-        Action::Run { command: None, .. } => println!("{}", cli::short_usage()),
     }
     ExitCode::SUCCESS
 }

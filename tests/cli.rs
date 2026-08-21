@@ -78,6 +78,23 @@ fn fuzzy_lookup_prints_the_closest_command() {
 }
 
 #[test]
+fn missing_command_without_close_matches_prints_the_no_match_message() {
+    let directory = TestDirectory::new("missing");
+    let output = wizard()
+        .arg("wizard-parity-definitely-missing")
+        .env("PATH", directory.as_ref())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "Command 'wizard-parity-definitely-missing' not found and no close matches."
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn reports_help_version_and_invalid_options() {
     let help = wizard().arg("--help").output().unwrap();
     assert!(help.status.success());
@@ -97,5 +114,12 @@ fn reports_help_version_and_invalid_options() {
         String::from_utf8(invalid.stderr)
             .unwrap()
             .contains("integer ≥ 1")
+    );
+
+    let unrecognized = wizard().arg("--unknown").output().unwrap();
+    assert!(!unrecognized.status.success());
+    assert_eq!(
+        String::from_utf8(unrecognized.stderr).unwrap().trim(),
+        "Unrecognized option '--unknown'"
     );
 }

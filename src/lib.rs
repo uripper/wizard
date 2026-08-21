@@ -25,12 +25,18 @@ impl std::fmt::Display for Algorithm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchOptions {
     pub algorithm: Algorithm,
+    pub all: bool,
     pub ignore_patterns: Vec<String>,
     pub ignored_directories: Vec<String>,
     pub include_windows: bool,
     pub num_matches: usize,
     pub sensitivity: f64,
+    pub show_dot: bool,
+    pub show_tilde: bool,
+    pub skip_dot: bool,
+    pub skip_tilde: bool,
     pub threshold: f64,
+    pub tty_only: bool,
     pub verbose: bool,
 }
 
@@ -38,18 +44,24 @@ impl Default for SearchOptions {
     fn default() -> Self {
         Self {
             algorithm: Algorithm::JaroWinkler,
+            all: false,
             ignore_patterns: Vec::new(),
             ignored_directories: Vec::new(),
             include_windows: false,
             num_matches: 5,
             sensitivity: 1.0,
+            show_dot: false,
+            show_tilde: false,
+            skip_dot: false,
+            skip_tilde: false,
             threshold: 0.75,
+            tty_only: false,
             verbose: false,
         }
     }
 }
 
-pub fn run(command: &str, options: &SearchOptions, writer: &mut impl Write) -> io::Result<()> {
+pub fn run(command: &str, options: &SearchOptions, writer: &mut impl Write) -> io::Result<bool> {
     if options.verbose {
         writeln!(writer, "Searching for '{command}' in PATH...")?;
         writeln!(
@@ -72,11 +84,16 @@ pub fn run(command: &str, options: &SearchOptions, writer: &mut impl Write) -> i
     }
 
     match search::search(command, options) {
-        search::SearchResult::Exact(path) => {
+        search::SearchResult::Exact(paths) => {
             if options.verbose {
-                writeln!(writer, "Exact match found: {}", path.display())?;
+                for path in &paths {
+                    writeln!(writer, "Exact match found: {}", path.display())?;
+                }
             }
-            writeln!(writer, "{}", path.display())
+            for path in paths {
+                writeln!(writer, "{}", path.display())?;
+            }
+            Ok(true)
         }
         search::SearchResult::Suggestions {
             matches,
@@ -89,7 +106,9 @@ pub fn run(command: &str, options: &SearchOptions, writer: &mut impl Write) -> i
                 )?;
                 writeln!(writer, "Total unique executables found: {candidate_count}")?;
             }
-            output::print_suggestions(writer, &matches, command, options.verbose)
+            let found_suggestions = !matches.is_empty();
+            output::print_suggestions(writer, &matches, command, options.verbose)?;
+            Ok(found_suggestions)
         }
     }
 }

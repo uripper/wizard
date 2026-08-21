@@ -16,7 +16,10 @@ pub fn print_suggestions(
     verbose: bool,
 ) -> io::Result<()> {
     if matches.is_empty() {
-        return writeln!(writer, "Command not found and no close matches.");
+        return writeln!(
+            writer,
+            "\nCommand '{command}' not found and no close matches."
+        );
     }
 
     writeln!(writer, "\nCommand '{command}' not found. Close matches:\n")?;
