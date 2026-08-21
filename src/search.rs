@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::env;
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -19,7 +18,7 @@ pub struct Suggestion {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchResult {
-    Exact(PathBuf),
+    Exact(Vec<PathBuf>),
     Suggestions {
         matches: Vec<Suggestion>,
         candidate_count: usize,
@@ -30,15 +29,7 @@ pub fn path_directories() -> Vec<PathBuf> {
     let Some(path) = env::var_os("PATH") else {
         return Vec::new();
     };
-    unique_paths(env::split_paths(&path))
-}
-
-fn unique_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
-    let mut seen = HashSet::<OsString>::new();
-    paths
-        .into_iter()
-        .filter(|path| seen.insert(path.as_os_str().to_owned()))
-        .collect()
+    env::split_paths(&path).collect()
 }
 
 pub fn search(command: &str, options: &SearchOptions) -> SearchResult {
@@ -50,8 +41,9 @@ pub fn search_in_paths(
     options: &SearchOptions,
     directories: &[PathBuf],
 ) -> SearchResult {
-    if let Some(path) = find_exact(command, directories) {
-        return SearchResult::Exact(path);
+    let exact = find_exact(command, directories, options);
+    if !exact.is_empty() {
+        return SearchResult::Exact(exact);
     }
 
     let ignored_directories: Vec<String> = options
@@ -62,8 +54,12 @@ pub fn search_in_paths(
     let per_directory: Vec<Vec<(String, PathBuf)>> = directories
         .par_iter()
         .map(|directory| {
-            if should_scan_fuzzy_directory(directory, options.include_windows, running_in_wsl()) {
-                collect_directory(directory, &options.ignore_patterns, &ignored_directories)
+            if should_skip_directory(directory, options) {
+                return Vec::new();
+            }
+            let directory = resolved_directory(directory);
+            if should_scan_fuzzy_directory(&directory, options.include_windows, running_in_wsl()) {
+                collect_directory(&directory, &options.ignore_patterns, &ignored_directories)
             } else {
                 Vec::new()
             }
@@ -136,25 +132,87 @@ fn detect_wsl() -> bool {
     false
 }
 
-fn find_exact(command: &str, directories: &[PathBuf]) -> Option<PathBuf> {
+fn find_exact(command: &str, directories: &[PathBuf], options: &SearchOptions) -> Vec<PathBuf> {
     let command_path = Path::new(command);
     if command_path.components().count() > 1 {
-        return is_executable(command_path, DirectoryKind::Native).then(|| command_path.into());
+        return is_executable(command_path, DirectoryKind::Native)
+            .then(|| printable_path(command_path, Some(command_path), options))
+            .into_iter()
+            .collect();
     }
 
+    let mut matches = Vec::new();
     for directory in directories {
-        let printable_directory = if directory.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            directory.as_path()
-        };
-        for candidate in exact_candidates(printable_directory, command) {
-            if is_executable(&candidate, directory_kind(printable_directory)) {
-                return Some(candidate);
+        if should_skip_directory(directory, options) {
+            continue;
+        }
+        let printable_directory = printable_directory(directory);
+        let resolved_directory = resolved_directory(directory);
+        for candidate in exact_candidates(&resolved_directory, command) {
+            if is_executable(&candidate, directory_kind(&resolved_directory)) {
+                matches.push(printable_path(
+                    &candidate,
+                    Some(printable_directory),
+                    options,
+                ));
+                if !options.all {
+                    return matches;
+                }
             }
         }
     }
-    None
+    matches
+}
+
+fn printable_directory(directory: &Path) -> &Path {
+    if directory.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        directory
+    }
+}
+
+fn should_skip_directory(directory: &Path, options: &SearchOptions) -> bool {
+    let text = directory.to_string_lossy();
+    (options.skip_dot && (text.is_empty() || text.starts_with('.')))
+        || (options.skip_tilde && (text == "~" || text.starts_with("~/")))
+}
+
+fn resolved_directory(directory: &Path) -> PathBuf {
+    let directory = printable_directory(directory);
+    let mut components = directory.components();
+    let Some(first) = components.next() else {
+        return PathBuf::from(".");
+    };
+    if first.as_os_str() != "~" {
+        return directory.to_owned();
+    }
+    let Some(home) = env::var_os("HOME") else {
+        return directory.to_owned();
+    };
+    let mut expanded = PathBuf::from(home);
+    expanded.extend(components);
+    expanded
+}
+
+fn printable_path(path: &Path, source: Option<&Path>, options: &SearchOptions) -> PathBuf {
+    if options.show_dot
+        && source.is_some_and(|source| {
+            let text = source.to_string_lossy();
+            text == "." || text.starts_with("./")
+        })
+    {
+        return path.to_owned();
+    }
+
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+    if options.show_tilde
+        && let Some(home) = env::var_os("HOME")
+        && let Ok(relative) = absolute.strip_prefix(PathBuf::from(home))
+    {
+        return Path::new("~").join(relative);
+    }
+    absolute
 }
 
 #[cfg(not(windows))]
@@ -278,13 +336,27 @@ fn windows_extensions() -> Vec<String> {
 
 #[cfg(unix)]
 fn is_executable(path: &Path, kind: DirectoryKind) -> bool {
-    use std::os::unix::fs::PermissionsExt;
+    use std::ffi::CString;
+    use std::os::raw::{c_char, c_int};
+    use std::os::unix::ffi::OsStrExt;
+
+    unsafe extern "C" {
+        fn access(pathname: *const c_char, mode: c_int) -> c_int;
+    }
+
+    const X_OK: c_int = 1;
 
     if matches!(kind, DirectoryKind::WslWindows) {
         return path.is_file();
     }
-    fs::metadata(path)
-        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    if !path.is_file() {
+        return false;
+    }
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is NUL-terminated and remains alive for the duration of the call.
+    unsafe { access(path.as_ptr(), X_OK) == 0 }
 }
 
 #[cfg(windows)]

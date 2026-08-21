@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 use wizard::cli::{self, Action};
@@ -18,16 +18,32 @@ fn main() -> ExitCode {
     match parsed.action {
         Action::Help => print!("{}", cli::help_text()),
         Action::Version => println!("{}", cli::version_text()),
-        Action::Run {
-            command: Some(command),
-            options,
-        } => {
-            if let Err(error) = wizard::run(&command, &options, &mut io::stdout().lock()) {
+        Action::Run { commands, options } => {
+            if commands.is_empty() {
+                eprintln!("{}", cli::short_usage());
+                return ExitCode::FAILURE;
+            }
+            let results: Vec<_> = commands
+                .into_iter()
+                .map(|command| wizard::lookup(command, &options))
+                .collect();
+            let resolved_all = results.iter().all(wizard::LookupResult::resolved);
+
+            let stdout = io::stdout();
+            let stdout_is_terminal = stdout.is_terminal();
+            if let Err(error) = wizard::output::print_results(
+                &mut stdout.lock(),
+                &results,
+                &options,
+                stdout_is_terminal,
+            ) {
                 eprintln!("wizard: {error}");
                 return ExitCode::FAILURE;
             }
+            if !resolved_all {
+                return ExitCode::FAILURE;
+            }
         }
-        Action::Run { command: None, .. } => println!("{}", cli::short_usage()),
     }
     ExitCode::SUCCESS
 }

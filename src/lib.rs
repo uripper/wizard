@@ -13,6 +13,14 @@ pub enum Algorithm {
     Levenshtein,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputFormat {
+    #[default]
+    Auto,
+    Pretty,
+    Plain,
+}
+
 impl std::fmt::Display for Algorithm {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -25,12 +33,19 @@ impl std::fmt::Display for Algorithm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchOptions {
     pub algorithm: Algorithm,
+    pub all: bool,
     pub ignore_patterns: Vec<String>,
     pub ignored_directories: Vec<String>,
     pub include_windows: bool,
     pub num_matches: usize,
+    pub output_format: OutputFormat,
     pub sensitivity: f64,
+    pub show_dot: bool,
+    pub show_tilde: bool,
+    pub skip_dot: bool,
+    pub skip_tilde: bool,
     pub threshold: f64,
+    pub tty_only: bool,
     pub verbose: bool,
 }
 
@@ -38,58 +53,48 @@ impl Default for SearchOptions {
     fn default() -> Self {
         Self {
             algorithm: Algorithm::JaroWinkler,
+            all: false,
             ignore_patterns: Vec::new(),
             ignored_directories: Vec::new(),
             include_windows: false,
             num_matches: 5,
+            output_format: OutputFormat::Auto,
             sensitivity: 1.0,
+            show_dot: false,
+            show_tilde: false,
+            skip_dot: false,
+            skip_tilde: false,
             threshold: 0.75,
+            tty_only: false,
             verbose: false,
         }
     }
 }
 
-pub fn run(command: &str, options: &SearchOptions, writer: &mut impl Write) -> io::Result<()> {
-    if options.verbose {
-        writeln!(writer, "Searching for '{command}' in PATH...")?;
-        writeln!(
-            writer,
-            "Sensitivity: {}, Algorithm: {}, Threshold: {}",
-            options.sensitivity, options.algorithm, options.threshold
-        )?;
-        writeln!(
-            writer,
-            "Ignoring: {}, Ignored Directories: {}",
-            options.ignore_patterns.join(", "),
-            options.ignored_directories.join(", ")
-        )?;
-        if search::windows_mounts_excluded(options) {
-            writeln!(
-                writer,
-                "Windows PATH directories: excluded from fuzzy search (use --include-windows to scan them)"
-            )?;
-        }
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub struct LookupResult {
+    pub command: String,
+    pub result: search::SearchResult,
+}
 
-    match search::search(command, options) {
-        search::SearchResult::Exact(path) => {
-            if options.verbose {
-                writeln!(writer, "Exact match found: {}", path.display())?;
-            }
-            writeln!(writer, "{}", path.display())
-        }
-        search::SearchResult::Suggestions {
-            matches,
-            candidate_count,
-        } => {
-            if options.verbose {
-                writeln!(
-                    writer,
-                    "Exact match not found. Gathering all executables from PATH..."
-                )?;
-                writeln!(writer, "Total unique executables found: {candidate_count}")?;
-            }
-            output::print_suggestions(writer, &matches, command, options.verbose)
+impl LookupResult {
+    pub fn resolved(&self) -> bool {
+        match &self.result {
+            search::SearchResult::Exact(paths) => !paths.is_empty(),
+            search::SearchResult::Suggestions { matches, .. } => !matches.is_empty(),
         }
     }
+}
+
+pub fn lookup(command: impl Into<String>, options: &SearchOptions) -> LookupResult {
+    let command = command.into();
+    let result = search::search(&command, options);
+    LookupResult { command, result }
+}
+
+pub fn run(command: &str, options: &SearchOptions, writer: &mut impl Write) -> io::Result<bool> {
+    let result = lookup(command, options);
+    let resolved = result.resolved();
+    output::print_results(writer, std::slice::from_ref(&result), options, false)?;
+    Ok(resolved)
 }
