@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 use wizard::cli::{self, Action};
@@ -23,18 +23,22 @@ fn main() -> ExitCode {
                 eprintln!("{}", cli::short_usage());
                 return ExitCode::FAILURE;
             }
-            let mut resolved_all = true;
-            for command in commands {
-                match wizard::run(&command, &options, &mut io::stdout().lock()) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        resolved_all = false;
-                    }
-                    Err(error) => {
-                        eprintln!("wizard: {error}");
-                        return ExitCode::FAILURE;
-                    }
-                }
+            let results: Vec<_> = commands
+                .into_iter()
+                .map(|command| wizard::lookup(command, &options))
+                .collect();
+            let resolved_all = results.iter().all(wizard::LookupResult::resolved);
+
+            let stdout = io::stdout();
+            let stdout_is_terminal = stdout.is_terminal();
+            if let Err(error) = wizard::output::print_results(
+                &mut stdout.lock(),
+                &results,
+                &options,
+                stdout_is_terminal,
+            ) {
+                eprintln!("wizard: {error}");
+                return ExitCode::FAILURE;
             }
             if !resolved_all {
                 return ExitCode::FAILURE;

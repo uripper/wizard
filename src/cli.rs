@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::IsTerminal;
 
-use crate::{Algorithm, SearchOptions, VERSION};
+use crate::{Algorithm, OutputFormat, SearchOptions, VERSION};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -109,6 +109,19 @@ where
                     .filter(|value| *value >= 1)
                     .ok_or_else(|| ParseError("--matches must be an integer ≥ 1".into()))?;
             }
+            _ if option_value(argument, "format").is_some() => {
+                let value = required_value(&args, &mut index, "format")?;
+                options.output_format = match value.as_str() {
+                    "auto" => OutputFormat::Auto,
+                    "pretty" => OutputFormat::Pretty,
+                    "plain" => OutputFormat::Plain,
+                    _ => {
+                        return Err(ParseError(format!(
+                            "Invalid format '{value}'; expected auto, pretty, or plain"
+                        )));
+                    }
+                };
+            }
             _ if option_value(argument, "ignore").is_some() => {
                 let value = required_value(&args, &mut index, "ignore")?;
                 options.ignore_patterns = parse_list(&value);
@@ -207,6 +220,7 @@ pub fn help_text() -> String {
            --ignoredir      Comma-separated directories to ignore\n\
            --include-windows  Include Windows PATH directories in fuzzy WSL searches\n\
            --matches        Number of matches to display, default: 5\n\
+           --format         auto | pretty | plain, default: auto\n\
            --version, -v, -V  Show version information\n",
     )
 }
@@ -352,6 +366,31 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "--matches must be an integer ≥ 1"
+        );
+    }
+
+    #[test]
+    fn parses_output_formats() {
+        for (value, expected) in [
+            ("auto", OutputFormat::Auto),
+            ("pretty", OutputFormat::Pretty),
+            ("plain", OutputFormat::Plain),
+        ] {
+            let parsed = parse_args([format!("--format={value}"), "spellcheck".into()]).unwrap();
+            let Action::Run { options, .. } = parsed.action else {
+                panic!("expected run action");
+            };
+            assert_eq!(options.output_format, expected);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_output_format() {
+        assert_eq!(
+            parse_args(["--format=ornate", "spellcheck"])
+                .unwrap_err()
+                .to_string(),
+            "Invalid format 'ornate'; expected auto, pretty, or plain"
         );
     }
 

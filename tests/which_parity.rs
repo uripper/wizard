@@ -452,7 +452,6 @@ fn effective_execute_permissions_have_which_parity() {
 }
 
 #[test]
-#[ignore = "known parity gap: Wizard's UTF-8 argument parser rejects non-UTF-8 command names"]
 fn non_utf8_command_names_have_which_parity() {
     let fixture = Fixture::new("non-utf8-name");
     let name = OsString::from_vec(b"wizard-parity-\xff".to_vec());
@@ -509,17 +508,6 @@ fn empty_path_entries_have_which_parity() {
     assert_eq!(actual.stdout, reference.stdout);
 }
 
-#[test]
-#[ignore = "intentional extension: Wizard explains when PATH is unset and no fuzzy match exists"]
-fn unset_path_has_which_parity() {
-    let fixture = Fixture::new("unset-path");
-    let reference = run_without_path(&system_which(), &[MISSING_COMMAND], &fixture.root);
-    let actual = run_without_path(&wizard(), &[MISSING_COMMAND], &fixture.root);
-
-    assert_eq!(actual.status.code(), reference.status.code());
-    assert_eq!(actual.stdout.is_empty(), reference.stdout.is_empty());
-    assert_eq!(actual.stderr.is_empty(), reference.stderr.is_empty());
-}
 
 #[test]
 fn short_all_matches_have_which_parity() {
@@ -586,52 +574,6 @@ fn multiple_command_operands_have_which_parity() {
     fixture.executable(&fixture.second_bin, SECOND_COMMAND);
 
     assert_matches_which(&[FIRST_COMMAND, SECOND_COMMAND], &fixture);
-}
-
-#[test]
-#[ignore = "intentional extension: a close fuzzy match makes the missing operand actionable"]
-fn mixed_found_and_missing_operands_have_which_parity() {
-    let fixture = Fixture::new("mixed-operands");
-    fixture.executable(&fixture.first_bin, FIRST_COMMAND);
-    let reference = run(
-        &system_which(),
-        &[FIRST_COMMAND, MISSING_COMMAND],
-        &fixture.path(),
-        &fixture.root,
-    );
-    let actual = run(
-        &wizard(),
-        &[FIRST_COMMAND, MISSING_COMMAND],
-        &fixture.path(),
-        &fixture.root,
-    );
-
-    assert_eq!(actual.status.code(), reference.status.code());
-    assert_eq!(actual.stdout, reference.stdout);
-    assert_eq!(actual.stderr.is_empty(), reference.stderr.is_empty());
-}
-
-#[test]
-#[ignore = "intentional extension: Wizard prints a no-close-matches diagnostic"]
-fn missing_command_exit_status_has_which_parity() {
-    let fixture = Fixture::new("missing-command");
-
-    let reference = run(
-        &system_which(),
-        &[MISSING_COMMAND],
-        &fixture.path(),
-        &fixture.root,
-    );
-    let actual = run(
-        &wizard(),
-        &[MISSING_COMMAND],
-        &fixture.path(),
-        &fixture.root,
-    );
-
-    assert_eq!(actual.status.code(), reference.status.code());
-    assert_eq!(actual.stdout.is_empty(), reference.stdout.is_empty());
-    assert_eq!(actual.stderr.is_empty(), reference.stderr.is_empty());
 }
 
 #[test]
