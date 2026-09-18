@@ -3,6 +3,7 @@
 Wizard is a fast, fuzzy-aware alternative to `which`. It finds an exact executable in
 `PATH`, or suggests the closest executable names if the command was misspelled.
 
+![Screenshot of Wizard](9626132e-5dcf-459d-8209-f1f2a7feb785.png)
 
 ## Build and install
 
